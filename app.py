@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 import json
 from google import genai
 from dotenv import load_dotenv
@@ -8,15 +8,19 @@ import re
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
-
 print("DEBUG → API KEY LOADED =", api_key)
 
 client = genai.Client(api_key=api_key)
 
 app = Flask(__name__)
 
+# 🔐 Secret key for session memory (random)
+app.secret_key = "campusassist_ai_secret_928374"
+
 DATA_FILE = "students.json"
 
+
+# ---------- Helpers ----------
 
 def load_students():
     if not os.path.exists(DATA_FILE):
@@ -30,7 +34,7 @@ def save_students(students):
         json.dump(students, f, indent=4)
 
 
-# routes ->
+# ---------- Routes ----------
 
 @app.route("/")
 def home():
@@ -80,8 +84,6 @@ def add_student():
     return render_template("add_students.html")
 
 
-#all students page ->
-
 @app.route("/students")
 def students_list():
     students = load_students()
@@ -89,23 +91,15 @@ def students_list():
     search_name = request.args.get("search")
     selected_class = request.args.get("class")
 
-    # Unique class list
     classes = sorted(set(s["class"] for s in students))
 
     if search_name:
         search_name = search_name.lower()
-        students = [
-            s for s in students
-            if search_name in s["name"].lower()
-        ]
-        selected_class = None  # reset class
+        students = [s for s in students if search_name in s["name"].lower()]
+        selected_class = None
 
-    # 🏫 Else if teacher selected CLASS → ignore search
     elif selected_class:
-        students = [
-            s for s in students
-            if s["class"] == selected_class
-        ]
+        students = [s for s in students if s["class"] == selected_class]
 
     return render_template(
         "students.html",
@@ -116,8 +110,6 @@ def students_list():
     )
 
 
-# Individual report card page ->
-
 @app.route("/report/<int:student_id>")
 def view_report(student_id):
     students = load_students()
@@ -125,15 +117,21 @@ def view_report(student_id):
     return render_template("report.html", student=student)
 
 
+# ---------- AI Chat (WITH MEMORY) ----------
+
 @app.route("/ai", methods=["GET", "POST"])
 def ai_chat():
     user_message = None
     ai_response = None
 
+    # 🧠 Initialize memory
+    if "chat_history" not in session:
+        session["chat_history"] = []
+
     if request.method == "POST":
         user_message = request.form["message"]
 
-        prompt = f"""
+        system_prompt = """
 You are CampusAssist AI, a helpful assistant for school teachers.
 
 STYLE RULES:
@@ -142,54 +140,60 @@ STYLE RULES:
 - Then provide bullet points
 - Each bullet point must be on a new line
 - Use '-' as bullet symbol
-- Maximum 5 bullet points
-- Keep each bullet point short and clear
 - End with ONE short encouraging closing sentence (max 12 words)
 - Do NOT write long paragraphs
-
-FORMAT EXAMPLE (follow exactly):
-Intro sentence.
-
-- Bullet point one
-- Bullet point two
-- Bullet point three
-
-Closing sentence.
-
-Teacher question:
-{user_message}
 """
+
+        # Add USER message to memory
+        session["chat_history"].append({
+            "role": "user",
+            "content": user_message
+        })
+        session.modified = True  # 🔒 REQUIRED
+
+        # Build Gemini conversation
+        contents = [
+            {
+                "role": "user",
+                "parts": [{"text": system_prompt}]
+            }
+        ]
+
+        for msg in session["chat_history"]:
+            role = "user" if msg["role"] == "user" else "model"
+            contents.append({
+                "role": role,
+                "parts": [{"text": msg["content"]}]
+            })
 
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=[{
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }]
+                contents=contents
             )
 
             raw = response.candidates[0].content.parts[0].text.strip()
 
-            # POST-PROCESSING ->
-
-            raw = response.candidates[0].content.parts[0].text.strip()
-
-            # Normalize bullet symbols
+            # ---------- POST-PROCESSING ----------
             raw = raw.replace("•", "-").replace("*", "-")
-           
             raw = raw.replace(". -", ".\n-")
-            
-            # 🔒 Split ONLY on bullets that start a point
-            points = re.split(r"\s*-\s+", raw)
 
-            clean_bullets = []
+            points = re.split(r"\n-\s*", raw)
+
+            clean_lines = []
             for p in points:
                 p = p.strip()
                 if p:
-                    clean_bullets.append(f"- {p.rstrip('.')}")
+                    clean_lines.append(f"- {p.rstrip('.')}")
 
-            ai_response = "\n".join(clean_bullets[:6])
+            ai_response = "\n".join(clean_lines[:8])
+
+            # Add AI response to memory (IMPORTANT: role = model)
+            session["chat_history"].append({
+                "role": "model",
+                "content": ai_response
+            })
+            session.modified = True
 
         except Exception as e:
             print("AI ERROR:", e)
@@ -201,8 +205,7 @@ Teacher question:
         ai_response=ai_response
     )
 
-
-
+# ---------- Run ----------
 
 if __name__ == "__main__":
     app.run(debug=True)
