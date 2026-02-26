@@ -6,7 +6,6 @@ import os
 import re
 from datetime import date
 
-# ------------------ SETUP ------------------
 
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
@@ -18,8 +17,6 @@ app.secret_key = "campusassist_secret_482739"  # random secret key
 
 DATA_FILE = "students.json"
 ATTENDANCE_FILE = "attendance.json"
-
-# ------------------ HELPERS ------------------
 
 def load_students():
     if not os.path.exists(DATA_FILE):
@@ -41,13 +38,10 @@ def save_attendance(data):
     with open(ATTENDANCE_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# ------------------ ROUTES ------------------
-
 @app.route("/")
 def home():
     return render_template("index.html", show_ai_button=True)
 
-# ---------- ADD STUDENT ----------
 
 @app.route("/add", methods=["GET", "POST"])
 def add_student():
@@ -88,7 +82,6 @@ def add_student():
 
     return render_template("add_students.html", show_ai_button=True)
 
-# ---------- ALL STUDENTS ----------
 
 @app.route("/students")
 def students_list():
@@ -113,15 +106,12 @@ def students_list():
         show_ai_button=True
     )
 
-# ---------- REPORT CARD ----------
 
 @app.route("/report/<int:student_id>")
 def view_report(student_id):
     students = load_students()
     student = next((s for s in students if s["id"] == student_id), None)
     return render_template("report.html", student=student, show_ai_button=True)
-
-# ---------- AI CHAT (WITH MEMORY) ----------
 
 @app.route("/ai", methods=["GET", "POST"])
 def ai_chat():
@@ -193,7 +183,6 @@ STYLE RULES:
         show_ai_button=False
     )
 
-# ---------- MARK ATTENDANCE ----------
 
 @app.route("/attendance/mark", methods=["GET", "POST"])
 def mark_attendance():
@@ -224,8 +213,6 @@ def mark_attendance():
         today=today,
         show_ai_button=True
     )
-
-# ---------- STUDENT ATTENDANCE ----------
 
 @app.route("/attendance/student/<int:student_id>")
 def student_attendance(student_id):
@@ -258,8 +245,6 @@ def student_attendance(student_id):
         history=history,
         show_ai_button=True
     )
-
-# ------------------ RUN ------------------
 
 if __name__ == "__main__":
     app.run(debug=True)
